@@ -30,14 +30,22 @@ state_path = pathlib.Path(os.environ['PANEHITCH_FAKE_STATE'])
 state = json.loads(state_path.read_text())
 command = sys.argv[1:]
 state['log'].append(command)
-if command[:2] == ['agent', 'start']:
-    result = {'pane_id': 'p-1', 'tab_id': 't-1'}
+if command[:2] == ['workspace', 'list']:
+    result = {'id': 'cli:workspace:list', 'result': {'workspaces': [{'label': 'w', 'workspace_id': 'w-1'}]}}
+elif command[:2] == ['tab', 'create']:
+    result = {'id': 'cli:tab:create', 'result': {'root_pane': {'pane_id': 'p-1', 'tab_id': 't-1'}}}
 elif command[:2] == ['agent', 'read']:
-    result = state['reads'].pop(0) if state['reads'] else {'text': '', 'status': 'working'}
+    state['current'] = state['reads'].pop(0) if state['reads'] else {'text': '', 'status': 'working'}
+    state_path.write_text(json.dumps(state))
+    print(state['current']['text'])
+    raise SystemExit(0)
+elif command[:2] == ['agent', 'get']:
+    current = state.get('current', {'status': 'idle'})
+    result = {'id': 'cli:agent:get', 'result': {'agent': {'pane_id': 'p-1', 'tab_id': 't-1', 'label': 'sample', 'agent_status': current.get('status')}}}
 elif command[:2] == ['agent', 'list']:
-    result = {'agents': [{'pane_id': 'p-1', 'label': 'review'}]}
+    result = {'id': 'cli:agent:list', 'result': {'agents': [{'pane_id': 'p-1', 'tab_id': 't-1', 'label': 'review', 'agent_status': 'idle'}]}}
 else:
-    result = {'ok': True}
+    result = {'id': 'cli:ok', 'result': {'ok': True}}
 state_path.write_text(json.dumps(state))
 print(json.dumps(result))
 """,
@@ -92,7 +100,7 @@ def test_lifecycle_marker_artifacts_and_schema(tmp_path: Path, monkeypatch) -> N
             {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
             {"text": "accepted", "status": "working"},
             {
-                "text": "prompt echo\nCYCLE_DONE old ok\nprogress\nCYCLE_DONE run-001 ok\nshell",
+                "text": "prompt echo\nCYCLE_DONE old ok\nprogress\n⏺ \x1b[32mCYCLE_DONE run-001 ok \x1b[0m\nshell",
                 "status": "working",
             },
         ],
@@ -112,9 +120,9 @@ def test_lifecycle_marker_artifacts_and_schema(tmp_path: Path, monkeypatch) -> N
     assert len(result["artifacts"]) == 1
     state_data = json.loads(state.read_text(encoding="utf-8"))
     assert any(item[1:3] == ["send-keys", "p-1"] for item in state_data["log"])
-    assert any(item[1:3] == ["close", "p-1"] for item in state_data["log"])
+    assert any(item[:2] == ["tab", "close"] for item in state_data["log"])
     start = next(item for item in state_data["log"] if item[:2] == ["agent", "start"])
-    assert start[start.index("--tools") + 1] == "example__read"
+    assert start[start.index("--allowedTools") + 1] == "example__read"
     prompted = next(item for item in state_data["log"] if item[:2] == ["agent", "prompt"])
     assert "again means stop" in prompted[3]
     outcome_path = Path(str(result["run_dir"])) / "outcome.json"
@@ -153,10 +161,12 @@ def test_unconfirmed_prompt_is_recorded(tmp_path: Path, monkeypatch) -> None:
         ],
     )
     run_dir = _fixed_run_dir(tmp_path)
+    (tmp_path / "artifact.txt").write_text("evidence", encoding="utf-8")
     monkeypatch.setattr("panehitch.runner._run_dir", lambda parent: run_dir)
     result = run_lane(load_lane(_lane(tmp_path)), backend, poll_s=0)
     assert result["status"] == "error"
     assert result["failure"] == "prompt_unconfirmed"
+    assert len(result["artifacts"]) == 1
 
 
 def test_blocked_marker_is_terminal_blocked(tmp_path: Path, monkeypatch) -> None:
@@ -172,6 +182,24 @@ def test_blocked_marker_is_terminal_blocked(tmp_path: Path, monkeypatch) -> None
     run_dir = _fixed_run_dir(tmp_path)
     monkeypatch.setattr("panehitch.runner._run_dir", lambda parent: run_dir)
     assert run_lane(load_lane(_lane(tmp_path)), backend, poll_s=0)["status"] == "blocked"
+
+
+def test_newest_matching_marker_wins(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("PANEHITCH_FAKE_STATE", str(tmp_path / "state.json"))
+    backend, _ = _fake_backend(
+        tmp_path,
+        [
+            {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
+            {"text": "accepted", "status": "working"},
+            {
+                "text": "CYCLE_DONE run-001 blocked\nprogress\nCYCLE_DONE run-001 ok",
+                "status": "working",
+            },
+        ],
+    )
+    run_dir = _fixed_run_dir(tmp_path)
+    monkeypatch.setattr("panehitch.runner._run_dir", lambda parent: run_dir)
+    assert run_lane(load_lane(_lane(tmp_path)), backend, poll_s=0)["status"] == "done"
 
 
 def test_wrong_run_marker_in_prompt_echo_cannot_complete(tmp_path: Path, monkeypatch) -> None:

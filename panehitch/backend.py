@@ -1,9 +1,10 @@
-"""Backend protocol and the current command-line adapter."""
+"""Backend protocol and the adapter for the current pane command-line tool."""
 
 from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
@@ -29,61 +30,85 @@ class PaneBackend(Protocol):
         tools: Sequence[str],
         label: str,
     ) -> Pane: ...
-
     def list(self) -> Sequence[Pane]: ...
-
     def prompt(self, pane_id: str, text: str) -> None: ...
-
     def read(self, pane_id: str) -> PaneSnapshot: ...
-
     def send_return(self, pane_id: str) -> None: ...
-
     def close(self, pane_id: str) -> None: ...
 
 
 class HerdrBackend:
-    """Adapter for the currently supported pane command-line program."""
+    """Adapter for the 0.8 command surface, with tab ownership retained locally."""
 
-    def __init__(self, executable: str = "herdr") -> None:
+    def __init__(self, executable: str = "herdr", *, command_timeout_s: float = 60) -> None:
         self.executable = executable
+        self.command_timeout_s = command_timeout_s
+        self._tabs: dict[str, str] = {}
 
-    def _json(self, args: Sequence[str]) -> Any:
+    def _run(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
         try:
             result = subprocess.run(
-                [self.executable, *args], text=True, capture_output=True, check=False, timeout=60
+                [self.executable, *args],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self.command_timeout_s,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise BackendError("backend command unavailable") from error
         if result.returncode:
             raise BackendError(result.stderr.strip() or "backend command failed")
+        return result
+
+    def _json(self, args: Sequence[str]) -> dict[str, Any]:
         try:
-            return json.loads(result.stdout)
+            payload = json.loads(self._run(args).stdout)
         except json.JSONDecodeError as error:
             raise BackendError("backend returned invalid JSON") from error
-
-    @staticmethod
-    def _items(payload: Any) -> Sequence[dict[str, Any]]:
-        if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
-        if isinstance(payload, dict):
-            for key in ("agents", "panes", "items"):
-                if isinstance(payload.get(key), list):
-                    return [item for item in payload[key] if isinstance(item, dict)]
-            return [payload]
-        return []
+        if not isinstance(payload, dict) or not isinstance(payload.get("result"), dict):
+            raise BackendError("backend response has no result envelope")
+        return payload["result"]
 
     @staticmethod
     def _pane(item: dict[str, Any]) -> Pane:
-        pane_id = item.get("pane_id") or item.get("id")
+        pane_id = item.get("pane_id")
         if not isinstance(pane_id, str) or not pane_id:
             raise BackendError("backend response has no pane_id")
-        tab_id = item.get("tab_id")
-        label = item.get("label") or item.get("name")
+        tab_id, label = item.get("tab_id"), item.get("label") or item.get("name")
         return Pane(
             pane_id,
             tab_id if isinstance(tab_id, str) else None,
             label if isinstance(label, str) else None,
         )
+
+    def _agent(self, pane_id: str) -> dict[str, Any]:
+        agent = self._json(["agent", "get", pane_id]).get("agent")
+        if not isinstance(agent, dict):
+            raise BackendError("backend response has no agent")
+        return agent
+
+    def _workspace_id(self, label_or_id: str) -> str:
+        workspaces = self._json(["workspace", "list"]).get("workspaces")
+        if not isinstance(workspaces, list):
+            raise BackendError("backend response has no workspaces")
+        for workspace in workspaces:
+            if isinstance(workspace, dict) and label_or_id in {
+                workspace.get("label"),
+                workspace.get("workspace_id"),
+            }:
+                workspace_id = workspace.get("workspace_id")
+                if isinstance(workspace_id, str):
+                    return workspace_id
+        raise BackendError("workspace was not found")
+
+    def _wait_for_settled_start(self, pane_id: str) -> None:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            status = self._agent(pane_id).get("agent_status")
+            if status in {"idle", "done"}:
+                return
+            time.sleep(0.25)
+        raise BackendError("agent did not reach a settled startup state")
 
     def start(
         self,
@@ -96,43 +121,101 @@ class HerdrBackend:
         tools: Sequence[str],
         label: str,
     ) -> Pane:
-        payload = self._json(
+        del session
+        workspace_id = self._workspace_id(workspace)
+        created = self._json(
             [
-                "agent",
-                "start",
-                "--session",
-                session,
+                "tab",
+                "create",
                 "--workspace",
-                workspace,
+                workspace_id,
                 "--cwd",
                 str(cwd),
-                "--kind",
-                kind,
                 "--label",
                 label,
-                "--tools",
-                ",".join(tools),
-                "--json",
-                *args,
+                "--no-focus",
             ]
         )
-        return self._pane(self._items(payload)[0])
+        root_pane = created.get("root_pane")
+        if not isinstance(root_pane, dict):
+            raise BackendError("tab creation returned no root pane")
+        tab = created.get("tab")
+        if (
+            isinstance(tab, dict)
+            and "tab_id" not in root_pane
+            and isinstance(tab.get("tab_id"), str)
+        ):
+            root_pane = {**root_pane, "tab_id": tab["tab_id"]}
+        pane = self._pane(root_pane)
+        try:
+            start_args = [
+                "agent",
+                "start",
+                label,
+                "--kind",
+                kind,
+                "--pane",
+                pane.pane_id,
+                "--timeout",
+                "3001",
+                "--",
+                *args,
+                "--allowedTools",
+                ",".join(tools),
+            ]
+            for attempt in range(40):
+                try:
+                    self._run(start_args)
+                    break
+                except BackendError as error:
+                    if "agent_not_ready" in str(error) or '"code":"timeout"' in str(error):
+                        self._wait_for_settled_start(pane.pane_id)
+                        break
+                    if "agent_pane_busy" in str(error) and attempt < 39:
+                        time.sleep(0.25)
+                        continue
+                    raise
+            # A recognized agent can report a transient startup block before it
+            # reaches the shell-ready idle state. Wait through that documented
+            # transition; a persistent block still fails closed.
+            started = self._pane(self._agent(pane.pane_id))
+        except BackendError:
+            if pane.tab_id:
+                try:
+                    self._run(["tab", "close", pane.tab_id])
+                except BackendError:
+                    pass
+            raise
+        if not started.tab_id:
+            raise BackendError("agent response has no tab_id")
+        self._tabs[started.pane_id] = started.tab_id
+        return started
 
     def list(self) -> Sequence[Pane]:
-        return [self._pane(item) for item in self._items(self._json(["agent", "list", "--json"]))]
+        agents = self._json(["agent", "list"]).get("agents")
+        if not isinstance(agents, list):
+            raise BackendError("backend response has no agents")
+        return [self._pane(agent) for agent in agents if isinstance(agent, dict)]
 
     def prompt(self, pane_id: str, text: str) -> None:
-        self._json(["agent", "prompt", pane_id, text, "--json"])
+        self._run(["agent", "prompt", pane_id, text])
+        # Give the authoritative status tracker one sampling interval to observe
+        # the post-prompt lifecycle transition before submission proof reads it.
+        time.sleep(0.5)
 
     def read(self, pane_id: str) -> PaneSnapshot:
-        payload = self._json(["agent", "read", pane_id, "--lines", "10", "--json"])
-        item = self._items(payload)[0]
-        text = item.get("text") or item.get("output") or ""
-        status = item.get("status")
-        return PaneSnapshot(str(text), status if isinstance(status, str) else None)
+        text = self._run(
+            ["agent", "read", pane_id, "--source", "recent-unwrapped", "--lines", "120"]
+        ).stdout
+        status = self._agent(pane_id).get("agent_status")
+        return PaneSnapshot(text, status if isinstance(status, str) else None)
 
     def send_return(self, pane_id: str) -> None:
-        self._json(["agent", "send-keys", pane_id, "return", "--json"])
+        self._run(["agent", "send-keys", pane_id, "return"])
 
     def close(self, pane_id: str) -> None:
-        self._json(["agent", "close", pane_id, "--json"])
+        tab_id = self._tabs.get(pane_id) or self._pane(self._agent(pane_id)).tab_id
+        if not tab_id:
+            raise BackendError("agent response has no tab_id")
+        self._run(["tab", "close", tab_id])
+        self._tabs.pop(pane_id, None)

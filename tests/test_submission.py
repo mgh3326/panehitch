@@ -58,7 +58,13 @@ def test_already_working_is_submission_signal() -> None:
     backend = FakeBackend([PaneSnapshot("normal output", "working")])
     proof = prove_submission(backend, "p-1", "prompt")
     assert proof.confirmed is True
-    assert proof.action == "already_working"
+    assert proof.action == "already_settled"
+
+
+def test_done_is_submission_signal_for_an_instant_turn() -> None:
+    proof = prove_submission(FakeBackend([PaneSnapshot("final output", "done")]), "p-1", "prompt")
+    assert proof.confirmed is True
+    assert proof.action == "already_settled"
 
 
 def test_missing_status_fails_closed() -> None:
@@ -66,3 +72,14 @@ def test_missing_status_fails_closed() -> None:
     proof = prove_submission(backend, "p-1", "prompt")
     assert proof.confirmed is False
     assert proof.action == "unconfirmed"
+
+
+def test_chip_overrides_queued_notice_and_uses_one_return() -> None:
+    backend = FakeBackend(
+        [
+            PaneSnapshot("[Pasted text #1 +2 lines]\nPress up to edit queued messages", "idle"),
+            PaneSnapshot("working", "working"),
+        ]
+    )
+    assert prove_submission(backend, "p-1", "prompt").confirmed is True
+    assert backend.returns == 1

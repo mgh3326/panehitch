@@ -32,16 +32,25 @@ import sys
 path = pathlib.Path(os.environ['PANEHITCH_FAKE_STATE'])
 state = json.loads(path.read_text())
 args = sys.argv[1:]
-if args[:2] == ['agent', 'start']:
-    result = {'pane_id': 'p-e2e', 'tab_id': 't-e2e'}
+if args[:2] == ['workspace', 'list']:
+    result = {'id': 'cli:workspace:list', 'result': {'workspaces': [{'label': 'w', 'workspace_id': 'w-1'}]}}
+elif args[:2] == ['tab', 'create']:
+    result = {'id': 'cli:tab:create', 'result': {'root_pane': {'pane_id': 'p-e2e', 'tab_id': 't-e2e'}}}
 elif args[:2] == ['agent', 'read']:
     result = state['reads'].pop(0)
     result['text'] = result['text'].replace('{run_id}', state.get('run_id', 'missing'))
+    state['current'] = result
+    path.write_text(json.dumps(state))
+    print(result['text'])
+    raise SystemExit(0)
+elif args[:2] == ['agent', 'get']:
+    current = state.get('current', {'status': 'idle'})
+    result = {'id': 'cli:agent:get', 'result': {'agent': {'pane_id': 'p-e2e', 'tab_id': 't-e2e', 'label': 'e2e', 'agent_status': current.get('status')}}}
 elif args[:2] == ['agent', 'prompt']:
     state['run_id'] = args[3].split('Run identity: ', 1)[1].split('.', 1)[0]
     result = {'ok': True}
 else:
-    result = {'ok': True}
+    result = {'id': 'cli:ok', 'result': {'ok': True}}
 path.write_text(json.dumps(state))
 print(json.dumps(result))
 """,

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from panehitch.cli import _inject_events, init_templates, inject
+from panehitch.cli import _inject_events, _write_seen, init_templates, inject
 from panehitch.models import Pane, PaneSnapshot
 
 
@@ -38,7 +38,7 @@ def test_inbox_seen_advances_only_after_confirmation(tmp_path: Path) -> None:
     )
     reports = _inject_events(Backend(), inbox, state)
     assert reports == [
-        {"target": "p-1", "confirmed": True, "action": "already_working", "id": "e-1"}
+        {"target": "p-1", "confirmed": True, "action": "already_settled", "id": "e-1"}
     ]
     assert json.loads(state.read_text(encoding="utf-8")) == ["e-1"]
 
@@ -118,3 +118,18 @@ def test_templates_refuse_nonempty_destination(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="empty"):
         init_templates(destination)
     assert (destination / "keep.md").read_text(encoding="utf-8") == "keep"
+
+
+def test_seen_state_uses_atomic_replace(tmp_path: Path, monkeypatch) -> None:
+    state = tmp_path / "state.json"
+    calls: list[tuple[Path, Path]] = []
+    original = Path.replace
+
+    def record_replace(source: Path, target: Path) -> Path:
+        calls.append((source, target))
+        return original(source, target)
+
+    monkeypatch.setattr(Path, "replace", record_replace)
+    _write_seen(state, {"e-1"})
+    assert calls == [(state.with_name(".state.json.tmp"), state)]
+    assert json.loads(state.read_text(encoding="utf-8")) == ["e-1"]

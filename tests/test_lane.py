@@ -69,3 +69,24 @@ def test_backend_kind_is_validated(tmp_path: Path) -> None:
     )
     with pytest.raises(LaneError, match="backend.kind"):
         load_lane(path)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ('label = "sample"', "label = 1", "label and cwd"),
+        ('kind = "claude"', 'kind = "other"', "agent.kind"),
+        ("timeout_s = 1", "timeout_s = 0", "positive timeout"),
+        ("[artifacts]", "[missing]", "missing table"),
+        ('allow = ["example__read"]', 'allow = "example__read"', "tools.allow"),
+        ('file = "', 'file_value = "', "prompt.file"),
+    ],
+)
+def test_required_lane_branches_fail_closed(
+    tmp_path: Path, old: str, new: str, message: str
+) -> None:
+    path = _write_lane(tmp_path)
+    text = path.read_text(encoding="utf-8").replace(old, new, 1)
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(LaneError, match=message):
+        load_lane(path)

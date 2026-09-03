@@ -15,6 +15,8 @@ from .backend import BackendError, PaneBackend
 from .lane import Lane
 from .submission import prove_submission
 
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
 
 def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -28,6 +30,20 @@ def _run_dir(parent: Path) -> Path:
         candidate = parent / f"run-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{number}"
     candidate.mkdir(parents=True)
     return candidate
+
+
+def _collect_artifacts(lane: Lane, run_dir: Path, outcome: dict[str, Any]) -> None:
+    for pattern in lane.artifact_globs:
+        for source_path in lane.cwd.glob(pattern):
+            if source_path.is_file():
+                target = run_dir / source_path.name
+                shutil.copy2(source_path, target)
+                outcome["artifacts"].append(str(target))
+
+
+def _normalized_line(line: str) -> str:
+    cleaned = ANSI_ESCAPE.sub("", line).strip()
+    return cleaned.removeprefix("⏺ ")
 
 
 def run_lane(
@@ -89,7 +105,8 @@ def run_lane(
                 (
                     candidate
                     for line in reversed(snapshot.text.splitlines())
-                    if (candidate := marker.fullmatch(line)) and candidate.group("run_id") == run_id
+                    if (candidate := marker.fullmatch(_normalized_line(line)))
+                    and candidate.group("run_id") == run_id
                 ),
                 None,
             )
@@ -103,15 +120,10 @@ def run_lane(
             sleep(poll_s)
         else:
             outcome["status"] = "timeout"
-        for pattern in lane.artifact_globs:
-            for source_path in lane.cwd.glob(pattern):
-                if source_path.is_file():
-                    target = run_dir / source_path.name
-                    shutil.copy2(source_path, target)
-                    outcome["artifacts"].append(str(target))
     except (BackendError, OSError, ValueError, re.error) as error:
         outcome["error"] = str(error)
     finally:
+        _collect_artifacts(lane, run_dir, outcome)
         if pane_id:
             try:
                 backend.close(pane_id)

@@ -40,6 +40,6 @@ def prove_submission(backend: SubmissionBackend, pane_id: str, prompt: str) -> S
         if after.status == "working":
             return SubmissionProof(True, "state_transition", before.status, after.status)
         return SubmissionProof(False, "unconfirmed", before.status, after.status)
-    if before.status == "working":
-        return SubmissionProof(True, "already_working", before.status, before.status)
+    if before.status in {"working", "done"}:
+        return SubmissionProof(True, "already_settled", before.status, before.status)
     return SubmissionProof(False, "unconfirmed", before.status, before.status)
