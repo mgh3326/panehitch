@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -39,9 +39,16 @@ class PaneBackend(Protocol):
 class HerdrBackend:
     """Adapter for the 0.8 command surface, with tab ownership retained locally."""
 
-    def __init__(self, executable: str = "herdr", *, command_timeout_s: float = 130) -> None:
+    def __init__(
+        self,
+        executable: str = "herdr",
+        *,
+        command_timeout_s: float = 130,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.executable = executable
         self.command_timeout_s = command_timeout_s
+        self._sleep = sleep
         self._tabs: dict[str, str] = {}
 
     def _run(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -98,7 +105,13 @@ class HerdrBackend:
                 workspace_id = workspace.get("workspace_id")
                 if isinstance(workspace_id, str):
                     return workspace_id
-        raise BackendError("workspace was not found")
+        labels = sorted(
+            workspace.get("label")
+            for workspace in workspaces
+            if isinstance(workspace, dict) and isinstance(workspace.get("label"), str)
+        )
+        available = ", ".join(labels) or "none"
+        raise BackendError(f"workspace was not found; available labels: {available}")
 
     def _wait_for_settled_start(self, pane_id: str) -> None:
         deadline = time.monotonic() + 120
@@ -117,7 +130,7 @@ class HerdrBackend:
                     raise BackendError("agent startup remained unknown")
             else:
                 unknown_count = 0
-            time.sleep(0.25)
+            self._sleep(0.25)
         raise BackendError("agent did not reach a settled startup state")
 
     @staticmethod
@@ -191,7 +204,7 @@ class HerdrBackend:
                         self._wait_for_settled_start(pane.pane_id)
                         break
                     if code == "agent_pane_busy" and attempt < 39:
-                        time.sleep(0.25)
+                        self._sleep(0.25)
                         continue
                     raise
             # A recognized agent can report a transient startup block before it
@@ -218,9 +231,6 @@ class HerdrBackend:
 
     def prompt(self, pane_id: str, text: str) -> None:
         self._run(["agent", "prompt", pane_id, text])
-        # Give the authoritative status tracker one sampling interval to observe
-        # the post-prompt lifecycle transition before submission proof reads it.
-        time.sleep(0.5)
 
     def read(self, pane_id: str) -> PaneSnapshot:
         text = self._run(

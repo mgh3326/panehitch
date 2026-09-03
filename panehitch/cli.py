@@ -27,20 +27,22 @@ class InjectionBackend(Protocol):
     def send_return(self, pane_id: str) -> None: ...
 
 
-def _resolve(backend: InjectionBackend, target: str) -> Pane:
+def _resolve(backend: InjectionBackend, target: str) -> tuple[Pane, PaneSnapshot]:
     choices = [pane for pane in backend.list() if pane.pane_id == target or pane.label == target]
     if len(choices) != 1:
         raise ValueError("target must identify exactly one pane")
     pane = choices[0]
-    backend.read(pane.pane_id)  # required preview before a potentially disruptive prompt
-    return pane
+    preview = backend.read(pane.pane_id)  # required preview before a disruptive prompt
+    return pane, preview
 
 
 def inject(backend: InjectionBackend, target: str, source: Path) -> dict[str, object]:
-    pane = _resolve(backend, target)
+    pane, preview = _resolve(backend, target)
     prompt = source.read_text(encoding="utf-8")
     backend.prompt(pane.pane_id, prompt)
-    proof = prove_submission(backend, pane.pane_id, prompt)
+    proof = prove_submission(
+        backend, pane.pane_id, prompt, pre_prompt_status=preview.status
+    )
     return {"target": pane.pane_id, "confirmed": proof.confirmed, "action": proof.action}
 
 

@@ -22,7 +22,15 @@ state_path = pathlib.Path(os.environ['PANEHITCH_BACKEND_STATE'])
 state = json.loads(state_path.read_text())
 args = sys.argv[1:]
 state['calls'].append(args)
-if (args[:2] in (['agent', 'list'], ['workspace', 'list']) and len(args) != 2) or '--json' in args:
+before_agent_args = args[:args.index('--')] if '--' in args else args
+allowed_flags = {
+    '--workspace', '--cwd', '--label', '--no-focus', '--kind', '--pane',
+    '--timeout', '--source', '--lines',
+}
+if (
+    (args[:2] in (['agent', 'list'], ['workspace', 'list']) and len(args) != 2)
+    or any(arg.startswith('--') and arg not in allowed_flags for arg in before_agent_args)
+):
     print('usage: fake-herdr', file=sys.stderr)
     state_path.write_text(json.dumps(state))
     raise SystemExit(2)
@@ -64,7 +72,8 @@ def test_adapter_uses_current_cli_shapes(tmp_path: Path, monkeypatch) -> None:
     executable = tmp_path / "fake-herdr"
     _executable(executable)
     monkeypatch.setenv("PANEHITCH_BACKEND_STATE", str(state))
-    backend = HerdrBackend(str(executable))
+    waits: list[float] = []
+    backend = HerdrBackend(str(executable), sleep=waits.append)
     pane = backend.start(
         workspace="work",
         cwd=tmp_path,
@@ -81,6 +90,18 @@ def test_adapter_uses_current_cli_shapes(tmp_path: Path, monkeypatch) -> None:
     backend.close(pane.pane_id)
     calls = json.loads(state.read_text())["calls"]
     start = next(call for call in calls if call[:2] == ["agent", "start"])
+    tab_create = next(call for call in calls if call[:2] == ["tab", "create"])
+    assert tab_create == [
+        "tab",
+        "create",
+        "--workspace",
+        "w1",
+        "--cwd",
+        str(tmp_path),
+        "--label",
+        "sample",
+        "--no-focus",
+    ]
     assert start == [
         "agent",
         "start",
@@ -98,6 +119,7 @@ def test_adapter_uses_current_cli_shapes(tmp_path: Path, monkeypatch) -> None:
     assert ["agent", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "120"] in calls
     assert ["agent", "prompt", "w1:p1", "hello"] in calls
     assert ["tab", "close", "w1:t1"] in calls
+    assert waits == []
 
 
 def test_fake_rejects_unknown_flags_like_cli(tmp_path: Path, monkeypatch) -> None:
@@ -114,6 +136,7 @@ def test_fake_rejects_unknown_flags_like_cli(tmp_path: Path, monkeypatch) -> Non
         ["agent", "list", "--json"],
         ["agent", "send-keys", "w1:p1", "return", "--json"],
         ["tab", "create", "--json"],
+        ["agent", "get", "w1:p1", "--quiet"],
     ):
         completed = subprocess.run(
             [str(executable), *args], text=True, capture_output=True, check=False
@@ -144,3 +167,106 @@ def test_start_failure_closes_created_tab(tmp_path: Path, monkeypatch) -> None:
             workspace="work", cwd=tmp_path, kind="claude", args=[], tools=["Read"], label="sample"
         )
     assert ["tab", "close", "w1:t1"] in json.loads(state.read_text())["calls"]
+
+
+def _start_with_responses(monkeypatch, responses: list[object]) -> tuple[HerdrBackend, list[list[str]]]:
+    backend = HerdrBackend("fake-herdr", sleep=lambda _: None)
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(backend, "_workspace_id", lambda workspace: "w1")
+    monkeypatch.setattr(
+        backend,
+        "_json",
+        lambda args: {"root_pane": {"pane_id": "w1:p1", "tab_id": "w1:t1"}},
+    )
+    monkeypatch.setattr(
+        backend,
+        "_agent",
+        lambda pane_id: {
+            "pane_id": pane_id,
+            "tab_id": "w1:t1",
+            "name": "sample",
+            "agent_status": "idle",
+        },
+    )
+    pending = iter(responses)
+
+    def run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[:2] == ["agent", "start"]:
+            outcome = next(pending)
+            if isinstance(outcome, BackendError):
+                raise outcome
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(backend, "_run", run)
+    return backend, calls
+
+
+def _backend_error(code: str) -> BackendError:
+    return BackendError(json.dumps({"error": {"code": code}}))
+
+
+def test_start_retries_busy_agent_response(monkeypatch, tmp_path: Path) -> None:
+    backend, calls = _start_with_responses(
+        monkeypatch, [_backend_error("agent_pane_busy"), object()]
+    )
+    pane = backend.start(
+        workspace="work", cwd=tmp_path, kind="claude", args=[], tools=["Read"], label="sample"
+    )
+    assert pane.pane_id == "w1:p1"
+    assert sum(call[:2] == ["agent", "start"] for call in calls) == 2
+
+
+def test_start_waits_for_not_ready_agent_response(monkeypatch, tmp_path: Path) -> None:
+    backend, calls = _start_with_responses(monkeypatch, [_backend_error("agent_not_ready")])
+    waited: list[str] = []
+    monkeypatch.setattr(backend, "_wait_for_settled_start", waited.append)
+    backend.start(
+        workspace="work", cwd=tmp_path, kind="claude", args=[], tools=["Read"], label="sample"
+    )
+    assert waited == ["w1:p1"]
+    assert sum(call[:2] == ["agent", "start"] for call in calls) == 1
+
+
+def test_start_fails_for_unrecognized_agent_response(monkeypatch, tmp_path: Path) -> None:
+    backend, calls = _start_with_responses(monkeypatch, [_backend_error("agent_missing")])
+    with pytest.raises(BackendError, match="agent_missing"):
+        backend.start(
+            workspace="work",
+            cwd=tmp_path,
+            kind="claude",
+            args=[],
+            tools=["Read"],
+            label="sample",
+        )
+    assert ["tab", "close", "w1:t1"] in calls
+
+
+def test_settled_start_fails_immediately_when_blocked(monkeypatch) -> None:
+    backend = HerdrBackend("fake-herdr", sleep=lambda _: None)
+    calls: list[str] = []
+
+    def agent(pane_id: str) -> dict[str, str]:
+        calls.append(pane_id)
+        return {"agent_status": "blocked"}
+
+    monkeypatch.setattr(backend, "_agent", agent)
+    with pytest.raises(BackendError, match="trust the working directory"):
+        backend._wait_for_settled_start("w1:p1")
+    assert calls == ["w1:p1"]
+
+
+def test_settled_start_bounds_unknown_status(monkeypatch) -> None:
+    backend = HerdrBackend("fake-herdr", sleep=lambda _: None)
+    calls = 0
+
+    def agent(pane_id: str) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        return {"agent_status": "unknown"}
+
+    monkeypatch.setattr(backend, "_agent", agent)
+    with pytest.raises(BackendError, match="remained unknown"):
+        backend._wait_for_settled_start("w1:p1")
+    assert calls == 20

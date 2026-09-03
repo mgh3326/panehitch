@@ -89,6 +89,28 @@ def test_inject_reads_preview_before_prompt(tmp_path: Path) -> None:
     assert backend.prompts == ["hello"]
 
 
+def test_inbox_does_not_confirm_a_prompt_swallowed_by_done_pane(tmp_path: Path) -> None:
+    class AlreadyDone(Backend):
+        def read(self, pane_id: str) -> PaneSnapshot:
+            self.reads += 1
+            return PaneSnapshot("", "done")
+
+    inbox, prompt, state = tmp_path / "inbox", tmp_path / "prompt.md", tmp_path / "state.json"
+    inbox.mkdir()
+    prompt.write_text("hello", encoding="utf-8")
+    (inbox / "event.json").write_text(
+        json.dumps({"id": "e-1", "target": "review", "prompt_file": str(prompt)}),
+        encoding="utf-8",
+    )
+    backend = AlreadyDone()
+    reports = _inject_events(backend, inbox, state)
+    assert reports == [
+        {"target": "p-1", "confirmed": False, "action": "unconfirmed", "id": "e-1"}
+    ]
+    assert backend.prompts == ["hello"]
+    assert not state.exists()
+
+
 def test_inject_rejects_ambiguous_target_without_prompt(tmp_path: Path) -> None:
     class Ambiguous(Backend):
         def list(self) -> Sequence[Pane]:
