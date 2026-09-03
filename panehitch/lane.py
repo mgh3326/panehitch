@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -28,9 +29,18 @@ def _strings(value: Any, name: str) -> list[str]:
 
 def load_lane(path: Path) -> Lane:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
-    agent, tools, prompt, completion, artifacts, herdr, report = (
+    agent, tools, prompt, completion, artifacts, backend, herdr, report = (
         _table(data, name)
-        for name in ("agent", "tools", "prompt", "completion", "artifacts", "herdr", "report")
+        for name in (
+            "agent",
+            "tools",
+            "prompt",
+            "completion",
+            "artifacts",
+            "backend",
+            "herdr",
+            "report",
+        )
     )
     label, cwd = data.get("label"), data.get("cwd")
     if not isinstance(label, str) or not isinstance(cwd, str):
@@ -41,6 +51,15 @@ def load_lane(path: Path) -> Lane:
     marker, timeout_s = completion.get("marker"), data.get("timeout_s")
     if not isinstance(marker, str) or not isinstance(timeout_s, (int, float)) or timeout_s <= 0:
         raise LaneError("completion.marker and positive timeout_s are required")
+    try:
+        compiled_marker = re.compile(marker)
+    except re.error as error:
+        raise LaneError("completion.marker is invalid") from error
+    if not {"run_id", "status"} <= set(compiled_marker.groupindex):
+        raise LaneError("completion.marker needs named run_id and status groups")
+    backend_kind = backend.get("kind")
+    if backend_kind != "herdr":
+        raise LaneError("backend.kind is unsupported")
     prompt_file = prompt.get("file")
     if not isinstance(prompt_file, str):
         raise LaneError("prompt.file is required")
@@ -55,6 +74,7 @@ def load_lane(path: Path) -> Lane:
         marker,
         float(timeout_s),
         _strings(artifacts.get("globs", []), "artifacts.globs"),
+        backend_kind,
         str(herdr.get("session", "default")),
         str(herdr.get("workspace", "default")),
         Path(str(report.get("dir", "reports"))),

@@ -42,7 +42,12 @@ def test_pasted_chip_still_present_is_unconfirmed() -> None:
 
 
 def test_queued_message_does_not_receive_return() -> None:
-    backend = FakeBackend([PaneSnapshot("Press up to edit queued messages", "idle")])
+    backend = FakeBackend(
+        [
+            PaneSnapshot("Press up to edit queued messages\nprompt", "idle"),
+            PaneSnapshot("still idle", "idle"),
+        ]
+    )
     proof = prove_submission(backend, "p-1", "prompt")
     assert proof.confirmed is True
     assert proof.action == "queued"
@@ -54,3 +59,10 @@ def test_already_working_is_submission_signal() -> None:
     proof = prove_submission(backend, "p-1", "prompt")
     assert proof.confirmed is True
     assert proof.action == "already_working"
+
+
+def test_missing_status_fails_closed() -> None:
+    backend = FakeBackend([PaneSnapshot("normal output", None)])
+    proof = prove_submission(backend, "p-1", "prompt")
+    assert proof.confirmed is False
+    assert proof.action == "unconfirmed"

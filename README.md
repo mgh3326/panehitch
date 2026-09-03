@@ -15,3 +15,10 @@ uv run panehitch inject --target review-pane --file prompt.md
 The companion tools are [panewire](https://github.com/mgh3326/panewire),
 [handoffkeep](https://github.com/mgh3326/handoffkeep), and
 [postuntil](https://github.com/mgh3326/postuntil).
+
+## Scope / not yet
+
+v0 deliberately does not include preflight policies, dry-run execution gates, report relays,
+hub notifications, transcript capture, pane-environment passthrough, advisory inbox locking,
+rate caps, hold ledgers, watermarks, or multi-adapter implementations. Those integrations stay
+outside this small public harness until their contracts can be made portable.

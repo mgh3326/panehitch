@@ -44,6 +44,13 @@ def inject(backend: InjectionBackend, target: str, source: Path) -> dict[str, ob
     return {"target": pane.pane_id, "confirmed": proof.confirmed, "action": proof.action}
 
 
+def _write_seen(state: Path, seen: set[str]) -> None:
+    state.parent.mkdir(parents=True, exist_ok=True)
+    temporary = state.with_name(f".{state.name}.tmp")
+    temporary.write_text(json.dumps(sorted(seen), indent=2) + "\n", encoding="utf-8")
+    temporary.replace(state)
+
+
 def _inject_events(backend: InjectionBackend, inbox: Path, state: Path) -> list[dict[str, object]]:
     seen = set(json.loads(state.read_text(encoding="utf-8"))) if state.exists() else set()
     reports: list[dict[str, object]] = []
@@ -59,13 +66,16 @@ def _inject_events(backend: InjectionBackend, inbox: Path, state: Path) -> list[
             or event_id in seen
         ):
             continue
-        report = inject(backend, target, Path(prompt_file))
+        try:
+            report = inject(backend, target, Path(prompt_file))
+        except (OSError, ValueError) as error:
+            reports.append({"id": event_id, "confirmed": False, "error": str(error)})
+            continue
         report["id"] = event_id
         reports.append(report)
         if report["confirmed"]:
             seen.add(event_id)
-    state.parent.mkdir(parents=True, exist_ok=True)
-    state.write_text(json.dumps(sorted(seen), indent=2) + "\n", encoding="utf-8")
+            _write_seen(state, seen)
     return reports
 
 
@@ -104,7 +114,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "run":
-            result = run_lane(load_lane(args.lane), HerdrBackend(args.herdr), poll_s=args.poll_s)
+            lane = load_lane(args.lane)
+            result = run_lane(lane, _backend_for(lane.backend_kind, args.herdr), poll_s=args.poll_s)
             print(json.dumps(result, sort_keys=True))
             return 0 if result["status"] in {"done", "blocked"} else 1
         if args.command == "inject":
@@ -124,3 +135,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (BackendError, LaneError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"panehitch: {error}", file=sys.stderr)
         return 2
+
+
+def _backend_for(kind: str, executable: str) -> HerdrBackend:
+    if kind == "herdr":
+        return HerdrBackend(executable)
+    raise LaneError("backend.kind is unsupported")

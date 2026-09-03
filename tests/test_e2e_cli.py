@@ -15,7 +15,7 @@ def test_run_command_with_fake_backend(tmp_path: Path) -> None:
                 "reads": [
                     {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
                     {"text": "accepted", "status": "working"},
-                    {"text": "CYCLE_DONE e2e ok", "status": "working"},
+                    {"text": "CYCLE_DONE {run_id} ok", "status": "working"},
                 ]
             }
         ),
@@ -36,6 +36,10 @@ if args[:2] == ['agent', 'start']:
     result = {'pane_id': 'p-e2e', 'tab_id': 't-e2e'}
 elif args[:2] == ['agent', 'read']:
     result = state['reads'].pop(0)
+    result['text'] = result['text'].replace('{run_id}', state.get('run_id', 'missing'))
+elif args[:2] == ['agent', 'prompt']:
+    state['run_id'] = args[3].split('Run identity: ', 1)[1].split('.', 1)[0]
+    result = {'ok': True}
 else:
     result = {'ok': True}
 path.write_text(json.dumps(state))
@@ -60,9 +64,11 @@ allow = ["example__read"]
 file = "{prompt}"
 header = "again means stop"
 [completion]
-marker = "^CYCLE_DONE (\\\\S+) (\\\\w+)$"
+marker = "^CYCLE_DONE (?P<run_id>\\\\S+) (?P<status>ok|blocked)$"
 [artifacts]
 globs = []
+[backend]
+kind = "herdr"
 [herdr]
 session = "s"
 workspace = "w"

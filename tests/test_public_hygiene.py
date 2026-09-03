@@ -27,6 +27,7 @@ def violations(root: Path) -> list[str]:
             or ".pytest_cache" in path.parts
             or ".ruff_cache" in path.parts
             or ".ty" in path.parts
+            or "reports" in path.parts
             or "__pycache__" in path.parts
             or path.name == "test_public_hygiene.py"
         ):

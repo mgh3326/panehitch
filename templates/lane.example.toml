@@ -14,10 +14,13 @@ file = "prompt.md"
 header = "(same content twice means do not run again)"
 
 [completion]
-marker = "^CYCLE_DONE (\\S+) (\\w+)$"
+marker = "^CYCLE_DONE (?P<run_id>\\S+) (?P<status>ok|blocked)$"
 
 [artifacts]
 globs = ["artifacts/*.json"]
+
+[backend]
+kind = "herdr"
 
 [herdr]
 session = "default"
