@@ -22,7 +22,9 @@ class SubmissionProof:
     after_status: str | None
 
 
-def prove_submission(backend: SubmissionBackend, pane_id: str, prompt: str) -> SubmissionProof:
+def prove_submission(
+    backend: SubmissionBackend, pane_id: str, prompt: str, *, pre_prompt_status: str | None = None
+) -> SubmissionProof:
     """Confirm delivery while never submitting an acknowledged queued message twice."""
     before = backend.read(pane_id)
     pasted_chip = "[Pasted text" in before.text
@@ -40,6 +42,8 @@ def prove_submission(backend: SubmissionBackend, pane_id: str, prompt: str) -> S
         if after.status == "working":
             return SubmissionProof(True, "state_transition", before.status, after.status)
         return SubmissionProof(False, "unconfirmed", before.status, after.status)
-    if before.status in {"working", "done"}:
+    if before.status == "working":
+        return SubmissionProof(True, "already_settled", before.status, before.status)
+    if before.status == "done" and pre_prompt_status != "done":
         return SubmissionProof(True, "already_settled", before.status, before.status)
     return SubmissionProof(False, "unconfirmed", before.status, before.status)

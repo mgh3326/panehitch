@@ -75,7 +75,6 @@ def load_lane(path: Path) -> Lane:
         float(timeout_s),
         _strings(artifacts.get("globs", []), "artifacts.globs"),
         backend_kind,
-        str(herdr.get("session", "default")),
         str(herdr.get("workspace", "default")),
         Path(str(report.get("dir", "reports"))),
     )

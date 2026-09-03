@@ -62,9 +62,24 @@ def test_already_working_is_submission_signal() -> None:
 
 
 def test_done_is_submission_signal_for_an_instant_turn() -> None:
-    proof = prove_submission(FakeBackend([PaneSnapshot("final output", "done")]), "p-1", "prompt")
+    proof = prove_submission(
+        FakeBackend([PaneSnapshot("final output", "done")]),
+        "p-1",
+        "prompt",
+        pre_prompt_status="idle",
+    )
     assert proof.confirmed is True
     assert proof.action == "already_settled"
+
+
+def test_done_without_a_post_prompt_transition_fails_closed() -> None:
+    proof = prove_submission(
+        FakeBackend([PaneSnapshot("ordinary output", "done")]),
+        "p-1",
+        "prompt",
+        pre_prompt_status="done",
+    )
+    assert proof.confirmed is False
 
 
 def test_missing_status_fails_closed() -> None:

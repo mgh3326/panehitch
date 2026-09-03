@@ -23,8 +23,7 @@ globs = ["artifacts/*.json"]
 kind = "herdr"
 
 [herdr]
-session = "default"
-workspace = "default"
+workspace = "REPLACE_WORKSPACE_LABEL"
 
 [report]
 dir = "reports"

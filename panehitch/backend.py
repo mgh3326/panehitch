@@ -22,7 +22,6 @@ class PaneBackend(Protocol):
     def start(
         self,
         *,
-        session: str,
         workspace: str,
         cwd: Path,
         kind: str,
@@ -40,7 +39,7 @@ class PaneBackend(Protocol):
 class HerdrBackend:
     """Adapter for the 0.8 command surface, with tab ownership retained locally."""
 
-    def __init__(self, executable: str = "herdr", *, command_timeout_s: float = 60) -> None:
+    def __init__(self, executable: str = "herdr", *, command_timeout_s: float = 130) -> None:
         self.executable = executable
         self.command_timeout_s = command_timeout_s
         self._tabs: dict[str, str] = {}
@@ -103,17 +102,37 @@ class HerdrBackend:
 
     def _wait_for_settled_start(self, pane_id: str) -> None:
         deadline = time.monotonic() + 120
+        unknown_count = 0
         while time.monotonic() < deadline:
             status = self._agent(pane_id).get("agent_status")
             if status in {"idle", "done"}:
                 return
+            if status == "blocked":
+                raise BackendError(
+                    "agent startup blocked; trust the working directory before running"
+                )
+            if status == "unknown":
+                unknown_count += 1
+                if unknown_count >= 20:
+                    raise BackendError("agent startup remained unknown")
+            else:
+                unknown_count = 0
             time.sleep(0.25)
         raise BackendError("agent did not reach a settled startup state")
+
+    @staticmethod
+    def _error_code(error: BackendError) -> str | None:
+        try:
+            payload = json.loads(str(error))
+        except json.JSONDecodeError:
+            return None
+        value = payload.get("error") if isinstance(payload, dict) else None
+        code = value.get("code") if isinstance(value, dict) else None
+        return code if isinstance(code, str) else None
 
     def start(
         self,
         *,
-        session: str,
         workspace: str,
         cwd: Path,
         kind: str,
@@ -121,7 +140,6 @@ class HerdrBackend:
         tools: Sequence[str],
         label: str,
     ) -> Pane:
-        del session
         workspace_id = self._workspace_id(workspace)
         created = self._json(
             [
@@ -157,7 +175,7 @@ class HerdrBackend:
                 "--pane",
                 pane.pane_id,
                 "--timeout",
-                "3001",
+                "120000",
                 "--",
                 *args,
                 "--allowedTools",
@@ -168,10 +186,11 @@ class HerdrBackend:
                     self._run(start_args)
                     break
                 except BackendError as error:
-                    if "agent_not_ready" in str(error) or '"code":"timeout"' in str(error):
+                    code = self._error_code(error)
+                    if code in {"agent_not_ready", "timeout"}:
                         self._wait_for_settled_start(pane.pane_id)
                         break
-                    if "agent_pane_busy" in str(error) and attempt < 39:
+                    if code == "agent_pane_busy" and attempt < 39:
                         time.sleep(0.25)
                         continue
                     raise

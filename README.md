@@ -8,6 +8,7 @@ Prompt injection is not submission. A command can place text in a composer witho
 
 ```sh
 uv run panehitch templates init example
+# Edit example/lane.example.toml and replace REPLACE_WORKSPACE_LABEL.
 uv run panehitch run --lane example/lane.example.toml
 uv run panehitch inject --target review-pane --file prompt.md
 ```
@@ -15,6 +16,8 @@ uv run panehitch inject --target review-pane --file prompt.md
 The companion tools are [panewire](https://github.com/mgh3326/panewire),
 [handoffkeep](https://github.com/mgh3326/handoffkeep), and
 [postuntil](https://github.com/mgh3326/postuntil).
+
+For the current backend, the working directory must already be trusted by the selected agent. A first-use trust dialog is recorded as a blocked startup and the run stops without sending a prompt.
 
 ## Scope / not yet
 

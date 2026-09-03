@@ -19,7 +19,6 @@ class Lane:
     timeout_s: float
     artifact_globs: list[str]
     backend_kind: str
-    session: str
     workspace: str
     report_dir: Path
 

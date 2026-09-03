@@ -97,6 +97,7 @@ def test_lifecycle_marker_artifacts_and_schema(tmp_path: Path, monkeypatch) -> N
     backend, state = _fake_backend(
         tmp_path,
         [
+            {"text": "idle", "status": "idle"},
             {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
             {"text": "accepted", "status": "working"},
             {
@@ -134,6 +135,7 @@ def test_timeout_is_not_done(tmp_path: Path, monkeypatch) -> None:
     backend, _ = _fake_backend(
         tmp_path,
         [
+            {"text": "idle", "status": "idle"},
             {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
             {"text": "accepted", "status": "working"},
         ],
@@ -156,6 +158,7 @@ def test_unconfirmed_prompt_is_recorded(tmp_path: Path, monkeypatch) -> None:
     backend, _ = _fake_backend(
         tmp_path,
         [
+            {"text": "idle", "status": "idle"},
             {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
             {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
         ],

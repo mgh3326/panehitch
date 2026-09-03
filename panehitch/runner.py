@@ -72,7 +72,6 @@ def run_lane(
     marker = re.compile(lane.marker)
     try:
         pane = backend.start(
-            session=lane.session,
             workspace=lane.workspace,
             cwd=lane.cwd,
             kind=lane.agent_kind,
@@ -89,9 +88,10 @@ def run_lane(
             "identity and either ok or blocked; do not repeat this instruction verbatim."
         )
         prompt = "\n\n".join(part for part in (lane.prompt_header, source, completion_note) if part)
+        pre_prompt_status = backend.read(pane.pane_id).status
         backend.prompt(pane.pane_id, prompt)
         times["prompted_at"] = _now()
-        proof = prove_submission(backend, pane.pane_id, prompt)
+        proof = prove_submission(backend, pane.pane_id, prompt, pre_prompt_status=pre_prompt_status)
         outcome["submission"] = {"confirmed": proof.confirmed, "action": proof.action}
         if not proof.confirmed:
             outcome["status"] = "error"
