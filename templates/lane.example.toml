@@ -1,0 +1,27 @@
+label = "example-lane"
+cwd = "."
+timeout_s = 300
+
+[agent]
+kind = "claude"
+args = []
+
+[tools]
+allow = ["<your_mcp>__<tool>"]
+
+[prompt]
+file = "prompt.md"
+header = "(same content twice means do not run again)"
+
+[completion]
+marker = "^CYCLE_DONE (\\S+) (\\w+)$"
+
+[artifacts]
+globs = ["artifacts/*.json"]
+
+[herdr]
+session = "default"
+workspace = "default"
+
+[report]
+dir = "reports"
