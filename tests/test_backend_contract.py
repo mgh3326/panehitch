@@ -47,6 +47,10 @@ elif args[:2] == ['agent', 'list']:
 elif args[:2] == ['agent', 'get']:
     output = {'id': 'cli:agent:get', 'result': {'agent': {'pane_id': 'w1:p1', 'tab_id': 'w1:t1', 'name': 'sample', 'agent_status': state['status']}}}
 elif args[:2] == ['agent', 'read']:
+    if state['status'] == 'working' and 'recent-unwrapped' in args:
+        print(json.dumps({'error': {'code': 'agent_not_idle'}}), file=sys.stderr)
+        state_path.write_text(json.dumps(state))
+        raise SystemExit(1)
     state_path.write_text(json.dumps(state))
     print('visible output')
     raise SystemExit(0)
@@ -116,7 +120,7 @@ def test_adapter_uses_current_cli_shapes(tmp_path: Path, monkeypatch) -> None:
         "--allowedTools",
         "Read",
     ]
-    assert ["agent", "read", "w1:p1", "--source", "recent-unwrapped", "--lines", "120"] in calls
+    assert ["agent", "read", "w1:p1", "--source", "visible", "--lines", "120"] in calls
     assert ["agent", "prompt", "w1:p1", "hello"] in calls
     assert ["tab", "close", "w1:t1"] in calls
     assert waits == []
@@ -143,6 +147,37 @@ def test_fake_rejects_unknown_flags_like_cli(tmp_path: Path, monkeypatch) -> Non
         )
         assert completed.returncode == 2
         assert "usage:" in completed.stderr
+
+
+def test_fake_reproduces_recent_read_failure_for_working_pane(tmp_path: Path, monkeypatch) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "herdr-agent-list.json"
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps(
+            {"calls": [], "status": "working", "agent_list": json.loads(fixture.read_text())}
+        ),
+        encoding="utf-8",
+    )
+    executable = tmp_path / "fake-herdr"
+    _executable(executable)
+    monkeypatch.setenv("PANEHITCH_BACKEND_STATE", str(state))
+    completed = subprocess.run(
+        [
+            str(executable),
+            "agent",
+            "read",
+            "w1:p1",
+            "--source",
+            "recent-unwrapped",
+            "--lines",
+            "120",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 1
+    assert json.loads(completed.stderr)["error"]["code"] == "agent_not_idle"
 
 
 def test_start_failure_closes_created_tab(tmp_path: Path, monkeypatch) -> None:

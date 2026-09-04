@@ -247,9 +247,7 @@ class HerdrBackend:
         self._run(["agent", "prompt", pane_id, text])
 
     def read(self, pane_id: str) -> PaneSnapshot:
-        text = self._run(
-            ["agent", "read", pane_id, "--source", "recent-unwrapped", "--lines", "120"]
-        ).stdout
+        text = self._run(["agent", "read", pane_id, "--source", "visible", "--lines", "120"]).stdout
         agent = self._agent(pane_id)
         status = agent.get("agent_status")
         prompt_at = next(
