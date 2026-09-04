@@ -44,6 +44,10 @@ elif command[:2] == ['agent', 'get']:
     result = {'id': 'cli:agent:get', 'result': {'agent': {'pane_id': 'p-1', 'tab_id': 't-1', 'label': 'sample', 'agent_status': current.get('status')}}}
 elif command[:2] == ['agent', 'list']:
     result = {'id': 'cli:agent:list', 'result': {'agents': [{'pane_id': 'p-1', 'tab_id': 't-1', 'label': 'review', 'agent_status': 'idle'}]}}
+elif command[:2] == ['agent', 'prompt'] and '--wait' in command and state.get('prompt_wait') == 'unsupported':
+    print('usage: fake-pane', file=sys.stderr)
+    state_path.write_text(json.dumps(state))
+    raise SystemExit(2)
 else:
     result = {'id': 'cli:ok', 'result': {'ok': True}}
 state_path.write_text(json.dumps(state))
@@ -120,7 +124,7 @@ def test_lifecycle_marker_artifacts_and_schema(tmp_path: Path, monkeypatch) -> N
     )
     assert len(result["artifacts"]) == 1
     state_data = json.loads(state.read_text(encoding="utf-8"))
-    assert any(item[1:3] == ["send-keys", "p-1"] for item in state_data["log"])
+    assert any(item[:2] == ["agent", "prompt"] and "--wait" in item for item in state_data["log"])
     assert any(item[:2] == ["tab", "close"] for item in state_data["log"])
     start = next(item for item in state_data["log"] if item[:2] == ["agent", "start"])
     assert start[start.index("--allowedTools") + 1] == "example__read"
@@ -155,7 +159,7 @@ def test_timeout_is_not_done(tmp_path: Path, monkeypatch) -> None:
 
 def test_unconfirmed_prompt_is_recorded(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PANEHITCH_FAKE_STATE", str(tmp_path / "state.json"))
-    backend, _ = _fake_backend(
+    backend, state = _fake_backend(
         tmp_path,
         [
             {"text": "idle", "status": "idle"},
@@ -163,6 +167,9 @@ def test_unconfirmed_prompt_is_recorded(tmp_path: Path, monkeypatch) -> None:
         ]
         + [{"text": "[Pasted text #1 +2 lines]", "status": "idle"}] * 8,
     )
+    state_data = json.loads(state.read_text(encoding="utf-8"))
+    state_data["prompt_wait"] = "unsupported"
+    state.write_text(json.dumps(state_data), encoding="utf-8")
     run_dir = _fixed_run_dir(tmp_path)
     (tmp_path / "artifact.txt").write_text("evidence", encoding="utf-8")
     monkeypatch.setattr("panehitch.runner._run_dir", lambda parent: run_dir)

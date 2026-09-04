@@ -35,3 +35,10 @@ class PaneSnapshot:
     text: str
     status: str | None
     prompt_at: str | None = None
+
+
+@dataclass(frozen=True)
+class PromptReceipt:
+    """Whether a backend authoritatively observed prompt submission."""
+
+    confirmed: bool

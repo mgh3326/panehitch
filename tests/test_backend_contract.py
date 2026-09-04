@@ -25,7 +25,7 @@ state['calls'].append(args)
 before_agent_args = args[:args.index('--')] if '--' in args else args
 allowed_flags = {
     '--workspace', '--cwd', '--label', '--no-focus', '--kind', '--pane',
-    '--timeout', '--source', '--lines',
+    '--timeout', '--source', '--lines', '--wait', '--until',
 }
 if (
     (args[:2] in (['agent', 'list'], ['workspace', 'list']) and len(args) != 2)
@@ -38,6 +38,15 @@ if args[:2] == ['agent', 'start'] and state.get('fail_start'):
     print(json.dumps({'error': {'code': 'startup_failed'}}), file=sys.stderr)
     state_path.write_text(json.dumps(state))
     raise SystemExit(1)
+if args[:2] == ['agent', 'prompt'] and '--wait' in args:
+    if state.get('prompt_wait') == 'timeout':
+        print(json.dumps({'error': {'code': 'timeout'}}), file=sys.stderr)
+        state_path.write_text(json.dumps(state))
+        raise SystemExit(1)
+    if state.get('prompt_wait') == 'unsupported':
+        print('usage: fake-herdr', file=sys.stderr)
+        state_path.write_text(json.dumps(state))
+        raise SystemExit(2)
 if args[:2] == ['workspace', 'list']:
     output = {'id': 'cli:workspace:list', 'result': {'workspaces': [{'label': 'work', 'workspace_id': 'w1'}]}}
 elif args[:2] == ['tab', 'create']:
@@ -89,7 +98,9 @@ def test_adapter_uses_current_cli_shapes(tmp_path: Path, monkeypatch) -> None:
     assert pane.pane_id == "w1:p1"
     assert backend.list()[0].tab_id == "w1:t1"
     assert backend.read(pane.pane_id).status == "working"
-    backend.prompt(pane.pane_id, "hello")
+    receipt = backend.prompt(pane.pane_id, "hello")
+    assert receipt is not None
+    assert receipt.confirmed is True
     backend.send_return(pane.pane_id)
     backend.close(pane.pane_id)
     calls = json.loads(state.read_text())["calls"]
@@ -121,7 +132,21 @@ def test_adapter_uses_current_cli_shapes(tmp_path: Path, monkeypatch) -> None:
         "Read",
     ]
     assert ["agent", "read", "w1:p1", "--source", "visible", "--lines", "120"] in calls
-    assert ["agent", "prompt", "w1:p1", "hello"] in calls
+    assert [
+        "agent",
+        "prompt",
+        "w1:p1",
+        "hello",
+        "--wait",
+        "--until",
+        "working",
+        "--until",
+        "done",
+        "--until",
+        "idle",
+        "--timeout",
+        "5000",
+    ] in calls
     assert ["tab", "close", "w1:t1"] in calls
     assert waits == []
 
@@ -178,6 +203,66 @@ def test_fake_reproduces_recent_read_failure_for_working_pane(tmp_path: Path, mo
     )
     assert completed.returncode == 1
     assert json.loads(completed.stderr)["error"]["code"] == "agent_not_idle"
+
+
+def test_prompt_wait_timeout_is_not_submission_confirmation(tmp_path: Path, monkeypatch) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "herdr-agent-list.json"
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "calls": [],
+                "status": "idle",
+                "agent_list": json.loads(fixture.read_text()),
+                "prompt_wait": "timeout",
+            }
+        ),
+        encoding="utf-8",
+    )
+    executable = tmp_path / "fake-herdr"
+    _executable(executable)
+    monkeypatch.setenv("PANEHITCH_BACKEND_STATE", str(state))
+    with pytest.raises(BackendError, match="timeout"):
+        HerdrBackend(str(executable)).prompt("w1:p1", "hello")
+
+
+def test_prompt_wait_unsupported_falls_back_to_screen_proof(tmp_path: Path, monkeypatch) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "herdr-agent-list.json"
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps(
+            {
+                "calls": [],
+                "status": "idle",
+                "agent_list": json.loads(fixture.read_text()),
+                "prompt_wait": "unsupported",
+            }
+        ),
+        encoding="utf-8",
+    )
+    executable = tmp_path / "fake-herdr"
+    _executable(executable)
+    monkeypatch.setenv("PANEHITCH_BACKEND_STATE", str(state))
+    assert HerdrBackend(str(executable)).prompt("w1:p1", "hello") is None
+    calls = json.loads(state.read_text())["calls"]
+    assert calls[-2:] == [
+        [
+            "agent",
+            "prompt",
+            "w1:p1",
+            "hello",
+            "--wait",
+            "--until",
+            "working",
+            "--until",
+            "done",
+            "--until",
+            "idle",
+            "--timeout",
+            "5000",
+        ],
+        ["agent", "prompt", "w1:p1", "hello"],
+    ]
 
 
 def test_start_failure_closes_created_tab(tmp_path: Path, monkeypatch) -> None:

@@ -89,13 +89,14 @@ def run_lane(
         )
         prompt = "\n\n".join(part for part in (lane.prompt_header, source, completion_note) if part)
         pre_prompt = backend.read(pane.pane_id)
-        backend.prompt(pane.pane_id, prompt)
+        receipt = backend.prompt(pane.pane_id, prompt)
         times["prompted_at"] = _now()
         proof = prove_submission(
             backend,
             pane.pane_id,
             prompt,
             pre_prompt=pre_prompt,
+            authoritative_submission=receipt.confirmed if receipt else None,
             wait_s=poll_s,
             sleep=sleep,
         )

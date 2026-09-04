@@ -36,6 +36,32 @@ def test_pasted_chip_needs_return_and_recheck() -> None:
     assert backend.returns == 1
 
 
+def test_authoritative_backend_wait_confirms_without_screen_signal() -> None:
+    snapshot = PaneSnapshot("", "done")
+    proof = prove_submission(
+        FakeBackend([snapshot]),
+        "p-1",
+        "prompt",
+        pre_prompt=snapshot,
+        authoritative_submission=True,
+    )
+    assert proof.confirmed is True
+    assert proof.action == "backend_wait"
+
+
+def test_failed_authoritative_backend_wait_fails_closed() -> None:
+    snapshot = PaneSnapshot("", "done")
+    proof = prove_submission(
+        FakeBackend([snapshot]),
+        "p-1",
+        "prompt",
+        pre_prompt=snapshot,
+        authoritative_submission=False,
+    )
+    assert proof.confirmed is False
+    assert proof.action == "backend_wait"
+
+
 def test_pasted_chip_still_present_is_unconfirmed() -> None:
     backend = FakeBackend(
         [

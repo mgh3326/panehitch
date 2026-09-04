@@ -31,6 +31,7 @@ def prove_submission(
     *,
     pre_prompt_status: str | None = None,
     pre_prompt: PaneSnapshot | None = None,
+    authoritative_submission: bool | None = None,
     confirmation_attempts: int = 8,
     wait_s: float = 0.25,
     sleep: Callable[[float], None] = time.sleep,
@@ -40,6 +41,10 @@ def prove_submission(
         raise ValueError("confirmation_attempts must be positive")
     baseline_status = pre_prompt.status if pre_prompt else pre_prompt_status
     before = backend.read(pane_id)
+    if authoritative_submission is True:
+        return SubmissionProof(True, "backend_wait", before.status, before.status)
+    if authoritative_submission is False:
+        return SubmissionProof(False, "backend_wait", before.status, before.status)
     pasted_chip = "[Pasted text" in before.text
     queued = "Press up to edit queued messages" in before.text
     literal_prompt = bool(prompt) and prompt in before.text

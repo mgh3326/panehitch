@@ -10,7 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
-from .models import Pane, PaneSnapshot
+from .models import Pane, PaneSnapshot, PromptReceipt
 
 
 class BackendError(RuntimeError):
@@ -39,7 +39,7 @@ class PaneBackend(Protocol):
         label: str,
     ) -> Pane: ...
     def list(self) -> Sequence[Pane]: ...
-    def prompt(self, pane_id: str, text: str) -> None: ...
+    def prompt(self, pane_id: str, text: str) -> PromptReceipt | None: ...
     def read(self, pane_id: str) -> PaneSnapshot: ...
     def send_return(self, pane_id: str) -> None: ...
     def close(self, pane_id: str) -> None: ...
@@ -243,8 +243,30 @@ class HerdrBackend:
             raise BackendError("backend response has no agents")
         return [self._pane(agent) for agent in agents if isinstance(agent, dict)]
 
-    def prompt(self, pane_id: str, text: str) -> None:
-        self._run(["agent", "prompt", pane_id, text])
+    def prompt(self, pane_id: str, text: str) -> PromptReceipt | None:
+        wait_args = [
+            "agent",
+            "prompt",
+            pane_id,
+            text,
+            "--wait",
+            "--until",
+            "working",
+            "--until",
+            "done",
+            "--until",
+            "idle",
+            "--timeout",
+            "5000",
+        ]
+        try:
+            self._json(wait_args)
+        except BackendError as error:
+            if "usage:" not in str(error).lower():
+                raise
+            self._run(["agent", "prompt", pane_id, text])
+            return None
+        return PromptReceipt(True)
 
     def read(self, pane_id: str) -> PaneSnapshot:
         text = self._run(["agent", "read", pane_id, "--source", "visible", "--lines", "120"]).stdout

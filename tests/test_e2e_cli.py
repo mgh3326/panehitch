@@ -48,7 +48,7 @@ elif args[:2] == ['agent', 'get']:
     result = {'id': 'cli:agent:get', 'result': {'agent': {'pane_id': 'p-e2e', 'tab_id': 't-e2e', 'label': 'e2e', 'agent_status': current.get('status')}}}
 elif args[:2] == ['agent', 'prompt']:
     state['run_id'] = args[3].split('Run identity: ', 1)[1].split('.', 1)[0]
-    result = {'ok': True}
+    result = {'id': 'cli:agent:prompt', 'result': {'ok': True}}
 else:
     result = {'id': 'cli:ok', 'result': {'ok': True}}
 path.write_text(json.dumps(state))

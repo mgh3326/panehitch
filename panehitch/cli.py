@@ -12,7 +12,7 @@ from typing import Protocol
 
 from .backend import BackendError, HerdrBackend, Pane
 from .lane import LaneError, load_lane
-from .models import PaneSnapshot
+from .models import PaneSnapshot, PromptReceipt
 from .runner import run_lane
 from .submission import prove_submission
 
@@ -20,7 +20,7 @@ from .submission import prove_submission
 class InjectionBackend(Protocol):
     def list(self) -> Sequence[Pane]: ...
 
-    def prompt(self, pane_id: str, text: str) -> None: ...
+    def prompt(self, pane_id: str, text: str) -> PromptReceipt | None: ...
 
     def read(self, pane_id: str) -> PaneSnapshot: ...
 
@@ -39,8 +39,14 @@ def _resolve(backend: InjectionBackend, target: str) -> tuple[Pane, PaneSnapshot
 def inject(backend: InjectionBackend, target: str, source: Path) -> dict[str, object]:
     pane, preview = _resolve(backend, target)
     prompt = source.read_text(encoding="utf-8")
-    backend.prompt(pane.pane_id, prompt)
-    proof = prove_submission(backend, pane.pane_id, prompt, pre_prompt=preview)
+    receipt = backend.prompt(pane.pane_id, prompt)
+    proof = prove_submission(
+        backend,
+        pane.pane_id,
+        prompt,
+        pre_prompt=preview,
+        authoritative_submission=receipt.confirmed if receipt else None,
+    )
     return {"target": pane.pane_id, "confirmed": proof.confirmed, "action": proof.action}
 
 
