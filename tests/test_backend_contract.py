@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from panehitch.backend import BackendError, HerdrBackend
+from panehitch.backend import BackendError, HerdrBackend, HerdrErrorCode
 
 
 def _executable(path: Path) -> None:
@@ -169,7 +169,9 @@ def test_start_failure_closes_created_tab(tmp_path: Path, monkeypatch) -> None:
     assert ["tab", "close", "w1:t1"] in json.loads(state.read_text())["calls"]
 
 
-def _start_with_responses(monkeypatch, responses: list[object]) -> tuple[HerdrBackend, list[list[str]]]:
+def _start_with_responses(
+    monkeypatch, responses: list[object]
+) -> tuple[HerdrBackend, list[list[str]]]:
     backend = HerdrBackend("fake-herdr", sleep=lambda _: None)
     calls: list[list[str]] = []
 
@@ -208,9 +210,8 @@ def _backend_error(code: str) -> BackendError:
 
 
 def test_start_retries_busy_agent_response(monkeypatch, tmp_path: Path) -> None:
-    backend, calls = _start_with_responses(
-        monkeypatch, [_backend_error("agent_pane_busy"), object()]
-    )
+    backend, calls = _start_with_responses(monkeypatch, [BackendError("opaque"), object()])
+    monkeypatch.setattr(backend, "_error_code", lambda error: HerdrErrorCode.PANE_BUSY)
     pane = backend.start(
         workspace="work", cwd=tmp_path, kind="claude", args=[], tools=["Read"], label="sample"
     )
@@ -219,7 +220,8 @@ def test_start_retries_busy_agent_response(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_start_waits_for_not_ready_agent_response(monkeypatch, tmp_path: Path) -> None:
-    backend, calls = _start_with_responses(monkeypatch, [_backend_error("agent_not_ready")])
+    backend, calls = _start_with_responses(monkeypatch, [BackendError("opaque")])
+    monkeypatch.setattr(backend, "_error_code", lambda error: HerdrErrorCode.NOT_READY)
     waited: list[str] = []
     monkeypatch.setattr(backend, "_wait_for_settled_start", waited.append)
     backend.start(
@@ -230,8 +232,9 @@ def test_start_waits_for_not_ready_agent_response(monkeypatch, tmp_path: Path) -
 
 
 def test_start_fails_for_unrecognized_agent_response(monkeypatch, tmp_path: Path) -> None:
-    backend, calls = _start_with_responses(monkeypatch, [_backend_error("agent_missing")])
-    with pytest.raises(BackendError, match="agent_missing"):
+    backend, calls = _start_with_responses(monkeypatch, [BackendError("opaque")])
+    monkeypatch.setattr(backend, "_error_code", lambda error: None)
+    with pytest.raises(BackendError, match="opaque"):
         backend.start(
             workspace="work",
             cwd=tmp_path,
@@ -241,6 +244,19 @@ def test_start_fails_for_unrecognized_agent_response(monkeypatch, tmp_path: Path
             label="sample",
         )
     assert ["tab", "close", "w1:t1"] in calls
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("agent_not_ready", HerdrErrorCode.NOT_READY),
+        ("agent_pane_busy", HerdrErrorCode.PANE_BUSY),
+        ("timeout", HerdrErrorCode.TIMEOUT),
+        ("other", None),
+    ],
+)
+def test_structured_start_error_codes_are_enums(code: str, expected: HerdrErrorCode | None) -> None:
+    assert HerdrBackend._error_code(_backend_error(code)) is expected
 
 
 def test_settled_start_fails_immediately_when_blocked(monkeypatch) -> None:

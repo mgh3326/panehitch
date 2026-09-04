@@ -160,8 +160,8 @@ def test_unconfirmed_prompt_is_recorded(tmp_path: Path, monkeypatch) -> None:
         [
             {"text": "idle", "status": "idle"},
             {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
-            {"text": "[Pasted text #1 +2 lines]", "status": "idle"},
-        ],
+        ]
+        + [{"text": "[Pasted text #1 +2 lines]", "status": "idle"}] * 8,
     )
     run_dir = _fixed_run_dir(tmp_path)
     (tmp_path / "artifact.txt").write_text("evidence", encoding="utf-8")

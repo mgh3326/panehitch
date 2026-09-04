@@ -34,3 +34,4 @@ class Pane:
 class PaneSnapshot:
     text: str
     status: str | None
+    prompt_at: str | None = None

@@ -88,10 +88,17 @@ def run_lane(
             "identity and either ok or blocked; do not repeat this instruction verbatim."
         )
         prompt = "\n\n".join(part for part in (lane.prompt_header, source, completion_note) if part)
-        pre_prompt_status = backend.read(pane.pane_id).status
+        pre_prompt = backend.read(pane.pane_id)
         backend.prompt(pane.pane_id, prompt)
         times["prompted_at"] = _now()
-        proof = prove_submission(backend, pane.pane_id, prompt, pre_prompt_status=pre_prompt_status)
+        proof = prove_submission(
+            backend,
+            pane.pane_id,
+            prompt,
+            pre_prompt=pre_prompt,
+            wait_s=poll_s,
+            sleep=sleep,
+        )
         outcome["submission"] = {"confirmed": proof.confirmed, "action": proof.action}
         if not proof.confirmed:
             outcome["status"] = "error"

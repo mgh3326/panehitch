@@ -6,6 +6,7 @@ import json
 import subprocess
 import time
 from collections.abc import Callable, Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -14,6 +15,14 @@ from .models import Pane, PaneSnapshot
 
 class BackendError(RuntimeError):
     """A backend command failed or returned an unusable response."""
+
+
+class HerdrErrorCode(StrEnum):
+    """Structured startup errors which have a documented recovery path."""
+
+    NOT_READY = "agent_not_ready"
+    PANE_BUSY = "agent_pane_busy"
+    TIMEOUT = "timeout"
 
 
 class PaneBackend(Protocol):
@@ -134,14 +143,19 @@ class HerdrBackend:
         raise BackendError("agent did not reach a settled startup state")
 
     @staticmethod
-    def _error_code(error: BackendError) -> str | None:
+    def _error_code(error: BackendError) -> HerdrErrorCode | None:
         try:
             payload = json.loads(str(error))
         except json.JSONDecodeError:
             return None
         value = payload.get("error") if isinstance(payload, dict) else None
         code = value.get("code") if isinstance(value, dict) else None
-        return code if isinstance(code, str) else None
+        if not isinstance(code, str):
+            return None
+        try:
+            return HerdrErrorCode(code)
+        except ValueError:
+            return None
 
     def start(
         self,
@@ -200,10 +214,10 @@ class HerdrBackend:
                     break
                 except BackendError as error:
                     code = self._error_code(error)
-                    if code in {"agent_not_ready", "timeout"}:
+                    if code in {HerdrErrorCode.NOT_READY, HerdrErrorCode.TIMEOUT}:
                         self._wait_for_settled_start(pane.pane_id)
                         break
-                    if code == "agent_pane_busy" and attempt < 39:
+                    if code is HerdrErrorCode.PANE_BUSY and attempt < 39:
                         self._sleep(0.25)
                         continue
                     raise
@@ -236,8 +250,21 @@ class HerdrBackend:
         text = self._run(
             ["agent", "read", pane_id, "--source", "recent-unwrapped", "--lines", "120"]
         ).stdout
-        status = self._agent(pane_id).get("agent_status")
-        return PaneSnapshot(text, status if isinstance(status, str) else None)
+        agent = self._agent(pane_id)
+        status = agent.get("agent_status")
+        prompt_at = next(
+            (
+                agent[key]
+                for key in ("last_prompt_at", "last_prompt_time", "last_prompt_ts")
+                if isinstance(agent.get(key), str)
+            ),
+            None,
+        )
+        return PaneSnapshot(
+            text,
+            status if isinstance(status, str) else None,
+            prompt_at,
+        )
 
     def send_return(self, pane_id: str) -> None:
         self._run(["agent", "send-keys", pane_id, "return"])

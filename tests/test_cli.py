@@ -20,7 +20,7 @@ class Backend:
 
     def read(self, pane_id: str) -> PaneSnapshot:
         self.reads += 1
-        return PaneSnapshot("queued output", "working")
+        return PaneSnapshot("queued output", "idle" if self.reads == 1 else "working")
 
     def prompt(self, pane_id: str, text: str) -> None:
         self.prompts.append(text)
@@ -38,7 +38,7 @@ def test_inbox_seen_advances_only_after_confirmation(tmp_path: Path) -> None:
     )
     reports = _inject_events(Backend(), inbox, state)
     assert reports == [
-        {"target": "p-1", "confirmed": True, "action": "already_settled", "id": "e-1"}
+        {"target": "p-1", "confirmed": True, "action": "state_transition", "id": "e-1"}
     ]
     assert json.loads(state.read_text(encoding="utf-8")) == ["e-1"]
 
@@ -104,9 +104,7 @@ def test_inbox_does_not_confirm_a_prompt_swallowed_by_done_pane(tmp_path: Path) 
     )
     backend = AlreadyDone()
     reports = _inject_events(backend, inbox, state)
-    assert reports == [
-        {"target": "p-1", "confirmed": False, "action": "unconfirmed", "id": "e-1"}
-    ]
+    assert reports == [{"target": "p-1", "confirmed": False, "action": "unconfirmed", "id": "e-1"}]
     assert backend.prompts == ["hello"]
     assert not state.exists()
 

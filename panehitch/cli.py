@@ -40,9 +40,7 @@ def inject(backend: InjectionBackend, target: str, source: Path) -> dict[str, ob
     pane, preview = _resolve(backend, target)
     prompt = source.read_text(encoding="utf-8")
     backend.prompt(pane.pane_id, prompt)
-    proof = prove_submission(
-        backend, pane.pane_id, prompt, pre_prompt_status=preview.status
-    )
+    proof = prove_submission(backend, pane.pane_id, prompt, pre_prompt=preview)
     return {"target": pane.pane_id, "confirmed": proof.confirmed, "action": proof.action}
 
 
