@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from panehitch.backend import BackendError, HerdrBackend, HerdrErrorCode
+from panehitch.backend import BackendError, HerdrBackend, HerdrErrorCode, PromptUnconfirmedError
 
 
 def _executable(path: Path) -> None:
@@ -45,6 +45,10 @@ if args[:2] == ['agent', 'prompt'] and '--wait' in args:
         raise SystemExit(1)
     if state.get('prompt_wait') == 'unsupported':
         print('usage: fake-herdr', file=sys.stderr)
+        state_path.write_text(json.dumps(state))
+        raise SystemExit(2)
+    if state.get('prompt_wait') == 'unknown_option':
+        print('unknown option: --wait', file=sys.stderr)
         state_path.write_text(json.dumps(state))
         raise SystemExit(2)
 if args[:2] == ['workspace', 'list']:
@@ -222,11 +226,28 @@ def test_prompt_wait_timeout_is_not_submission_confirmation(tmp_path: Path, monk
     executable = tmp_path / "fake-herdr"
     _executable(executable)
     monkeypatch.setenv("PANEHITCH_BACKEND_STATE", str(state))
-    with pytest.raises(BackendError, match="timeout"):
+    with pytest.raises(PromptUnconfirmedError, match="timeout"):
         HerdrBackend(str(executable)).prompt("w1:p1", "hello")
 
 
-def test_prompt_wait_unsupported_falls_back_to_screen_proof(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "code",
+    ["timeout", "agent_pane_busy", "agent_blocked", "agent_prompt_stalled"],
+)
+def test_prompt_wait_preconfirmation_codes_are_fail_closed(monkeypatch, code: str) -> None:
+    backend = HerdrBackend("fake-herdr")
+
+    def fail_json(args: list[str]) -> dict[str, object]:
+        raise _backend_error(code)
+
+    monkeypatch.setattr(backend, "_json", fail_json)
+    with pytest.raises(PromptUnconfirmedError, match=code):
+        backend.prompt("w1:p1", "hello")
+
+
+def test_prompt_wait_unsupported_diagnostics_fall_back_to_screen_proof(
+    tmp_path: Path, monkeypatch
+) -> None:
     fixture = Path(__file__).parent / "fixtures" / "herdr-agent-list.json"
     state = tmp_path / "state.json"
     state.write_text(
@@ -235,7 +256,7 @@ def test_prompt_wait_unsupported_falls_back_to_screen_proof(tmp_path: Path, monk
                 "calls": [],
                 "status": "idle",
                 "agent_list": json.loads(fixture.read_text()),
-                "prompt_wait": "unsupported",
+                "prompt_wait": "unknown_option",
             }
         ),
         encoding="utf-8",
@@ -244,13 +265,21 @@ def test_prompt_wait_unsupported_falls_back_to_screen_proof(tmp_path: Path, monk
     _executable(executable)
     monkeypatch.setenv("PANEHITCH_BACKEND_STATE", str(state))
     assert HerdrBackend(str(executable)).prompt("w1:p1", "hello") is None
+    state_data = json.loads(state.read_text())
+    state_data["prompt_wait"] = "unsupported"
+    state.write_text(json.dumps(state_data), encoding="utf-8")
+    assert HerdrBackend(str(executable)).prompt("w1:p1", "hello again") is None
     calls = json.loads(state.read_text())["calls"]
-    assert calls[-2:] == [
-        [
+    assert len(calls) == 4
+    for waited, fallback, text in (
+        (calls[0], calls[1], "hello"),
+        (calls[2], calls[3], "hello again"),
+    ):
+        assert waited == [
             "agent",
             "prompt",
             "w1:p1",
-            "hello",
+            text,
             "--wait",
             "--until",
             "working",
@@ -260,9 +289,8 @@ def test_prompt_wait_unsupported_falls_back_to_screen_proof(tmp_path: Path, monk
             "idle",
             "--timeout",
             "5000",
-        ],
-        ["agent", "prompt", "w1:p1", "hello"],
-    ]
+        ]
+        assert fallback == ["agent", "prompt", "w1:p1", text]
 
 
 def test_start_failure_closes_created_tab(tmp_path: Path, monkeypatch) -> None:
@@ -372,6 +400,8 @@ def test_start_fails_for_unrecognized_agent_response(monkeypatch, tmp_path: Path
         ("agent_not_ready", HerdrErrorCode.NOT_READY),
         ("agent_pane_busy", HerdrErrorCode.PANE_BUSY),
         ("timeout", HerdrErrorCode.TIMEOUT),
+        ("agent_blocked", HerdrErrorCode.AGENT_BLOCKED),
+        ("agent_prompt_stalled", HerdrErrorCode.PROMPT_STALLED),
         ("other", None),
     ],
 )

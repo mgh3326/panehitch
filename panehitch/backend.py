@@ -17,12 +17,18 @@ class BackendError(RuntimeError):
     """A backend command failed or returned an unusable response."""
 
 
+class PromptUnconfirmedError(BackendError):
+    """Herdr rejected a waited submission before its delivery was confirmed."""
+
+
 class HerdrErrorCode(StrEnum):
     """Structured startup errors which have a documented recovery path."""
 
     NOT_READY = "agent_not_ready"
     PANE_BUSY = "agent_pane_busy"
     TIMEOUT = "timeout"
+    AGENT_BLOCKED = "agent_blocked"
+    PROMPT_STALLED = "agent_prompt_stalled"
 
 
 class PaneBackend(Protocol):
@@ -157,6 +163,16 @@ class HerdrBackend:
         except ValueError:
             return None
 
+    @staticmethod
+    def _wait_options_unsupported(error: BackendError) -> bool:
+        """Recognize only the two observed CLI diagnostics for an unknown wait option."""
+        message = str(error).lower()
+        first_line = message.splitlines()[0] if message else ""
+        return "usage:" in message or (
+            first_line.startswith("unknown option:")
+            and any(option in first_line for option in ("--wait", "--until", "--timeout"))
+        )
+
     def start(
         self,
         *,
@@ -262,7 +278,19 @@ class HerdrBackend:
         try:
             self._json(wait_args)
         except BackendError as error:
-            if "usage:" not in str(error).lower():
+            # `herdr agent prompt --help` documents these pre-confirmation
+            # failures: agent_blocked, agent_prompt_stalled, and timeout. A
+            # busy pane is also a structured, no-submission response emitted
+            # by the current CLI, so never allow any of them to become a
+            # generic runner error or a compatibility fallback.
+            if self._error_code(error) in {
+                HerdrErrorCode.PANE_BUSY,
+                HerdrErrorCode.TIMEOUT,
+                HerdrErrorCode.AGENT_BLOCKED,
+                HerdrErrorCode.PROMPT_STALLED,
+            }:
+                raise PromptUnconfirmedError(str(error)) from error
+            if not self._wait_options_unsupported(error):
                 raise
             self._run(["agent", "prompt", pane_id, text])
             return None

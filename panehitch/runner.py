@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .backend import BackendError, PaneBackend
+from .backend import BackendError, PaneBackend, PromptUnconfirmedError
 from .lane import Lane
 from .submission import prove_submission
 
@@ -128,6 +128,13 @@ def run_lane(
             sleep(poll_s)
         else:
             outcome["status"] = "timeout"
+    except PromptUnconfirmedError as error:
+        # The backend explicitly says the waited submission was never
+        # confirmed. Preserve that stable contract before finally closing the
+        # tab; generic errors remain reserved for unclassifiable failures.
+        outcome["submission"] = {"confirmed": False, "action": "backend_wait"}
+        outcome["failure"] = "prompt_unconfirmed"
+        outcome["error"] = str(error)
     except (BackendError, OSError, ValueError, re.error) as error:
         outcome["error"] = str(error)
     finally:

@@ -33,7 +33,11 @@ state['log'].append(command)
 if command[:2] == ['workspace', 'list']:
     result = {'id': 'cli:workspace:list', 'result': {'workspaces': [{'label': 'w', 'workspace_id': 'w-1'}]}}
 elif command[:2] == ['tab', 'create']:
+    state['open_tabs'] = ['t-1']
     result = {'id': 'cli:tab:create', 'result': {'root_pane': {'pane_id': 'p-1', 'tab_id': 't-1'}}}
+elif command[:2] == ['tab', 'close']:
+    state['open_tabs'] = []
+    result = {'id': 'cli:tab:close', 'result': {'ok': True}}
 elif command[:2] == ['agent', 'read']:
     state['current'] = state['reads'].pop(0) if state['reads'] else {'text': '', 'status': 'working'}
     state_path.write_text(json.dumps(state))
@@ -48,6 +52,10 @@ elif command[:2] == ['agent', 'prompt'] and '--wait' in command and state.get('p
     print('usage: fake-pane', file=sys.stderr)
     state_path.write_text(json.dumps(state))
     raise SystemExit(2)
+elif command[:2] == ['agent', 'prompt'] and '--wait' in command and state.get('prompt_wait') == 'timeout':
+    print(json.dumps({'error': {'code': 'timeout'}}), file=sys.stderr)
+    state_path.write_text(json.dumps(state))
+    raise SystemExit(1)
 else:
     result = {'id': 'cli:ok', 'result': {'ok': True}}
 state_path.write_text(json.dumps(state))
@@ -177,6 +185,28 @@ def test_unconfirmed_prompt_is_recorded(tmp_path: Path, monkeypatch) -> None:
     assert result["status"] == "error"
     assert result["failure"] == "prompt_unconfirmed"
     assert len(result["artifacts"]) == 1
+
+
+def test_wait_timeout_is_prompt_unconfirmed_and_closes_tab(tmp_path: Path, monkeypatch) -> None:
+    """A real-shaped Herdr timeout is fail-closed before any completion polling."""
+    monkeypatch.setenv("PANEHITCH_FAKE_STATE", str(tmp_path / "state.json"))
+    backend, state = _fake_backend(tmp_path, [{"text": "idle", "status": "idle"}])
+    state_data = json.loads(state.read_text(encoding="utf-8"))
+    state_data["prompt_wait"] = "timeout"
+    state.write_text(json.dumps(state_data), encoding="utf-8")
+    run_dir = _fixed_run_dir(tmp_path)
+    monkeypatch.setattr("panehitch.runner._run_dir", lambda parent: run_dir)
+
+    result = run_lane(load_lane(_lane(tmp_path)), backend, poll_s=0)
+
+    persisted = json.loads((run_dir / "outcome.json").read_text(encoding="utf-8"))
+    assert result["status"] == "error"
+    assert result["failure"] == "prompt_unconfirmed"
+    assert result["submission"] == {"confirmed": False, "action": "backend_wait"}
+    assert persisted["failure"] == "prompt_unconfirmed"
+    state_data = json.loads(state.read_text(encoding="utf-8"))
+    assert state_data["open_tabs"] == []
+    assert sum(item[:2] == ["tab", "close"] for item in state_data["log"]) == 1
 
 
 def test_blocked_marker_is_terminal_blocked(tmp_path: Path, monkeypatch) -> None:
