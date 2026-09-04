@@ -1,0 +1,31 @@
+[project]
+name = "panehitch"
+version = "0.1.0"
+description = "Repeatable pane session harness"
+readme = "README.md"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "panehitch contributors" }]
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.12", "ty>=0.0.1a20"]
+
+[project.scripts]
+panehitch = "panehitch.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ty]
+environment = { python-version = "3.13" }
+
+[tool.hatch.build.targets.wheel]
+force-include = { "templates" = "panehitch/templates" }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.panehitch</string>
+  <key>ProgramArguments</key><array><string>uv</string><string>run</string><string>panehitch</string><string>run</string><string>--lane</string><string>lane.toml</string></array>
+  <key>WorkingDirectory</key><string>REPLACE_WORKSPACE</string>
+</dict></plist>

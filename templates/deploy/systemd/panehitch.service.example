@@ -1,0 +1,9 @@
+[Unit]
+Description=Panehitch lane example
+
+[Service]
+Type=oneshot
+WorkingDirectory=REPLACE_WORKSPACE
+ExecStart=uv run panehitch run --lane lane.toml
+NoNewPrivileges=true
+PrivateTmp=true

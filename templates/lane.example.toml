@@ -1,0 +1,29 @@
+label = "example-lane"
+cwd = "."
+timeout_s = 300
+
+[agent]
+kind = "claude"
+args = []
+
+[tools]
+allow = ["<your_mcp>__<tool>"]
+
+[prompt]
+file = "prompt.md"
+header = "(same content twice means do not run again)"
+
+[completion]
+marker = "^CYCLE_DONE (?P<run_id>\\S+) (?P<status>ok|blocked)$"
+
+[artifacts]
+globs = ["artifacts/*.json"]
+
+[backend]
+kind = "herdr"
+
+[herdr]
+workspace = "REPLACE_WORKSPACE_LABEL"
+
+[report]
+dir = "reports"
